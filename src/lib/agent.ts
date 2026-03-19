@@ -96,6 +96,43 @@ async function deepLinkedInResearch(
   return response.json();
 }
 
+async function fetchPage(
+  mppFetch: typeof fetch,
+  url: string
+): Promise<string> {
+  try {
+    const response = await mppFetch("https://mpp.browserbase.com/fetch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    const data = await response.json();
+    return data.content || "";
+  } catch {
+    return "";
+  }
+}
+
+async function verifyEmail(
+  mppFetch: typeof fetch,
+  email: string
+): Promise<boolean> {
+  try {
+    const response = await mppFetch(
+      "https://hunter.mpp.paywithlocus.com/hunter/email-verifier",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      }
+    );
+    const data = await response.json();
+    return data.data?.status === "valid" || data.data?.result === "deliverable";
+  } catch {
+    return false;
+  }
+}
+
 async function findEmail(
   mppFetch: typeof fetch,
   name: string,
@@ -249,17 +286,39 @@ export async function runAgent(
         }
       }
 
+      // Step 3b: Scrape full profile page via Browserbase
+      let pageContent = "";
+      if (result.url) {
+        try {
+          onEvent({
+            type: "enrich",
+            message: `Scraping full profile: ${name}`,
+          });
+          pageContent = await fetchPage(mppFetch, result.url);
+          onEvent({
+            type: "spend",
+            message: `Scraped profile page for ${name} via Browserbase`,
+            cost: 0.01,
+          });
+        } catch {
+          // page fetch may fail
+        }
+      }
+
       const rawCompany = enriched.company || linkedinData.company || result.author || "";
       const company = rawCompany
         .replace(/\s*(Prog\.AI|getprog\.ai|Freelancer|LinkedIn).*$/i, "")
         .trim() || "N/A";
+
+      // Combine all data sources for the richest summary
+      const rawSummary = pageContent || result.text || enriched.bio || "";
 
       candidates.push({
         name,
         title: enriched.title || linkedinData.title || "N/A",
         company,
         linkedinUrl: linkedinUrl || undefined,
-        summary: stripMarkdown(result.text || enriched.bio || ""),
+        summary: stripMarkdown(rawSummary).slice(0, 500),
         score: 0,
         reasoning: "",
         scoreBreakdown: { skills: 0, experience: 0, education: 0, relevance: 0 },
@@ -358,11 +417,23 @@ ${candidates.map((c) => `- ${c.name}: ${c.title} at ${c.company}. ${c.summary}`)
       const emailResult = await findEmail(mppFetch, candidate.name, candidate.company);
       if (emailResult) {
         candidate.email = emailResult.email;
-        candidate.emailVerified = emailResult.verified;
         onEvent({
           type: "spend",
-          message: `Found email for ${candidate.name}${emailResult.verified ? " (verified)" : ""}`,
+          message: `Found email for ${candidate.name} via Hunter`,
           cost: 0.01,
+        });
+
+        // Step 5b: Verify email via Hunter
+        onEvent({
+          type: "contact",
+          message: `Verifying email for ${candidate.name}...`,
+        });
+        const isVerified = await verifyEmail(mppFetch, emailResult.email);
+        candidate.emailVerified = isVerified;
+        onEvent({
+          type: "spend",
+          message: `Email ${isVerified ? "verified" : "unverified"} for ${candidate.name}`,
+          cost: 0.005,
         });
       }
     }
