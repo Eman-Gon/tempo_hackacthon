@@ -1,34 +1,5 @@
-const mockCreate = jest.fn().mockResolvedValue({
-  id: "wallet-abc",
-  address: "0xdeadbeef1234567890abcdef1234567890abcdef",
-});
-
-// Async iterator that yields wallets from a configurable array
-let mockWalletList: any[] = [];
-
 jest.mock("@privy-io/node", () => ({
-  PrivyClient: jest.fn().mockImplementation(() => ({
-    wallets: () => ({
-      create: mockCreate,
-      list: jest.fn().mockReturnValue({
-        [Symbol.asyncIterator]: () => {
-          let i = 0;
-          return {
-            next: () =>
-              i < mockWalletList.length
-                ? Promise.resolve({ value: mockWalletList[i++], done: false })
-                : Promise.resolve({ value: undefined, done: true }),
-          };
-        },
-      }),
-      ethereum: () => ({
-        signMessage: jest.fn(),
-        signSecp256k1: jest.fn(),
-        signTypedData: jest.fn(),
-      }),
-    }),
-    users: () => ({ get: jest.fn() }),
-  })),
+  PrivyClient: jest.fn().mockImplementation(() => ({})),
 }));
 
 import { POST } from "@/app/api/wallet/route";
@@ -43,11 +14,6 @@ function createRequest(body: any): NextRequest {
 }
 
 describe("POST /api/wallet", () => {
-  beforeEach(() => {
-    mockWalletList = [];
-    mockCreate.mockClear();
-  });
-
   it("returns 400 when privyUserId is missing", async () => {
     const req = createRequest({});
     const res = await POST(req);
@@ -57,32 +23,13 @@ describe("POST /api/wallet", () => {
     expect(data.error).toBe("privyUserId is required");
   });
 
-  it("creates a new wallet when no existing wallet found", async () => {
-    mockWalletList = [];
+  it("returns the hardcoded funded wallet", async () => {
     const req = createRequest({ privyUserId: "did:privy:user-123" });
     const res = await POST(req);
     expect(res.status).toBe(200);
 
     const data = await res.json();
-    expect(data.walletId).toBe("wallet-abc");
-    expect(data.address).toBe("0xdeadbeef1234567890abcdef1234567890abcdef");
-    expect(mockCreate).toHaveBeenCalledTimes(1);
-  });
-
-  it("returns existing wallet when one is found", async () => {
-    mockWalletList = [
-      {
-        id: "wallet-existing",
-        address: "0x1111111111111111111111111111111111111111",
-      },
-    ];
-    const req = createRequest({ privyUserId: "did:privy:user-123" });
-    const res = await POST(req);
-    expect(res.status).toBe(200);
-
-    const data = await res.json();
-    expect(data.walletId).toBe("wallet-existing");
-    expect(data.address).toBe("0x1111111111111111111111111111111111111111");
-    expect(mockCreate).not.toHaveBeenCalled();
+    expect(data.walletId).toBe("js13iejxuggh7hr4oay0eodi");
+    expect(data.address).toBe("0x52207fb0B18D48E4f4F69f8AeB63FC1e4fCc2FE1");
   });
 });

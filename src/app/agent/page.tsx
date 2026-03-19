@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useCallback } from "react";
 
 interface AgentEvent {
-  type: "search" | "enrich" | "analyze" | "complete" | "error" | "spend";
+  type: "search" | "enrich" | "analyze" | "contact" | "complete" | "error" | "spend";
   message: string;
   data?: any;
   cost?: number;
@@ -18,6 +18,9 @@ interface Candidate {
   title: string;
   company: string;
   linkedinUrl?: string;
+  email?: string;
+  emailVerified?: boolean;
+  outreachSent?: boolean;
   summary: string;
   score: number;
   reasoning: string;
@@ -217,11 +220,13 @@ export default function AgentPage() {
                           ? "bg-green-400"
                           : event.type === "analyze"
                             ? "bg-yellow-400"
-                            : event.type === "spend"
-                              ? "bg-indigo-400"
-                              : event.type === "error"
-                                ? "bg-red-400"
-                                : "bg-gray-400"
+                            : event.type === "contact"
+                              ? "bg-purple-400"
+                              : event.type === "spend"
+                                ? "bg-indigo-400"
+                                : event.type === "error"
+                                  ? "bg-red-400"
+                                  : "bg-gray-400"
                     }`}
                   />
                   <span className="text-gray-400">{event.message}</span>
@@ -277,9 +282,21 @@ export default function AgentPage() {
                 >
                   <div className="flex items-start justify-between mb-2">
                     <div>
-                      <h3 className="font-semibold text-white">
-                        {candidate.name}
-                      </h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-semibold text-white">
+                          {candidate.name}
+                        </h3>
+                        {candidate.outreachSent && (
+                          <span className="text-[10px] bg-purple-900/50 text-purple-400 px-1.5 py-0.5 rounded">
+                            Contacted
+                          </span>
+                        )}
+                        {candidate.email && !candidate.outreachSent && (
+                          <span className="text-[10px] bg-green-900/50 text-green-400 px-1.5 py-0.5 rounded">
+                            Email Found
+                          </span>
+                        )}
+                      </div>
                       <p className="text-sm text-gray-400">
                         {candidate.title} at {candidate.company}
                       </p>
@@ -305,7 +322,51 @@ export default function AgentPage() {
                     {candidate.summary}
                   </p>
                   {isExpanded && (
-                    <div className="mt-4 pt-4 border-t border-gray-800 space-y-3">
+                    <div className="mt-4 pt-4 border-t border-gray-800 space-y-4">
+                      {/* AI Reasoning */}
+                      {candidate.reasoning && (
+                        <div>
+                          <span className="text-xs text-gray-500 uppercase tracking-wide">AI Analysis</span>
+                          <p className="text-sm text-gray-300 mt-1">{candidate.reasoning}</p>
+                        </div>
+                      )}
+
+                      {/* Score Breakdown Chart */}
+                      {candidate.scoreBreakdown && (
+                        <div>
+                          <span className="text-xs text-gray-500 uppercase tracking-wide">Score Breakdown</span>
+                          <div className="mt-2 space-y-2">
+                            {(
+                              [
+                                ["Skills", candidate.scoreBreakdown.skills],
+                                ["Experience", candidate.scoreBreakdown.experience],
+                                ["Education", candidate.scoreBreakdown.education],
+                                ["Relevance", candidate.scoreBreakdown.relevance],
+                              ] as [string, number][]
+                            ).map(([label, value]) => (
+                              <div key={label} className="flex items-center gap-3">
+                                <span className="text-xs text-gray-400 w-20">{label}</span>
+                                <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-all ${
+                                      value >= 80
+                                        ? "bg-green-500"
+                                        : value >= 60
+                                          ? "bg-yellow-500"
+                                          : value >= 40
+                                            ? "bg-orange-500"
+                                            : "bg-red-500"
+                                    }`}
+                                    style={{ width: `${value}%` }}
+                                  />
+                                </div>
+                                <span className="text-xs text-gray-400 w-8 text-right">{value}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                       {candidate.title !== "N/A" && (
                         <div>
                           <span className="text-xs text-gray-500 uppercase tracking-wide">Role</span>
@@ -337,17 +398,45 @@ export default function AgentPage() {
                           </div>
                         </div>
                       )}
-                      {candidate.linkedinUrl && (
-                        <a
-                          href={candidate.linkedinUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="inline-flex items-center gap-1 text-sm text-indigo-400 hover:text-indigo-300 mt-2"
-                        >
-                          View LinkedIn Profile →
-                        </a>
+                      {/* Email & Outreach Status */}
+                      {candidate.email && (
+                        <div>
+                          <span className="text-xs text-gray-500 uppercase tracking-wide">Email</span>
+                          <div className="flex items-center gap-2 mt-1">
+                            <a
+                              href={`mailto:${candidate.email}`}
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-sm text-indigo-400 hover:text-indigo-300"
+                            >
+                              {candidate.email}
+                            </a>
+                            {candidate.emailVerified && (
+                              <span className="text-xs bg-green-900/50 text-green-400 px-1.5 py-0.5 rounded">
+                                Verified
+                              </span>
+                            )}
+                            {candidate.outreachSent && (
+                              <span className="text-xs bg-purple-900/50 text-purple-400 px-1.5 py-0.5 rounded">
+                                Outreach Sent
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       )}
+
+                      <div className="flex items-center gap-3 mt-1">
+                        {candidate.linkedinUrl && (
+                          <a
+                            href={candidate.linkedinUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="inline-flex items-center gap-1 text-sm text-indigo-400 hover:text-indigo-300"
+                          >
+                            LinkedIn →
+                          </a>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>

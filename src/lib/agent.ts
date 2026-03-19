@@ -17,6 +17,9 @@ export interface CandidateResult {
   title: string;
   company: string;
   linkedinUrl?: string;
+  email?: string;
+  emailVerified?: boolean;
+  outreachSent?: boolean;
   summary: string;
   score: number;
   reasoning: string;
@@ -30,7 +33,7 @@ export interface CandidateResult {
 }
 
 export interface AgentEvent {
-  type: "search" | "enrich" | "analyze" | "complete" | "error" | "spend";
+  type: "search" | "enrich" | "analyze" | "contact" | "complete" | "error" | "spend";
   message: string;
   data?: any;
   cost?: number;
@@ -91,6 +94,65 @@ async function deepLinkedInResearch(
     }
   );
   return response.json();
+}
+
+async function findEmail(
+  mppFetch: typeof fetch,
+  name: string,
+  company: string
+): Promise<{ email: string; verified: boolean } | null> {
+  try {
+    // Extract domain from company name for Hunter lookup
+    const nameParts = name.split(" ");
+    const firstName = nameParts[0] || "";
+    const lastName = nameParts.slice(1).join(" ") || "";
+
+    const response = await mppFetch(
+      "https://hunter.mpp.paywithlocus.com/hunter/email-finder",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          first_name: firstName,
+          last_name: lastName,
+          company,
+        }),
+      }
+    );
+    const data = await response.json();
+    if (data.data?.email) {
+      return {
+        email: data.data.email,
+        verified: data.data.verification?.status === "valid",
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function sendOutreach(
+  mppFetch: typeof fetch,
+  to: string,
+  candidateName: string,
+  jobDescription: string
+): Promise<boolean> {
+  try {
+    const response = await mppFetch("https://stableemail.dev/api/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        to: [to],
+        subject: `Exciting opportunity — ${jobDescription.slice(0, 60)}`,
+        text: `Hi ${candidateName.split(" ")[0]},\n\nI came across your profile and was impressed by your background. We have an exciting opportunity that aligns well with your experience:\n\n${jobDescription.slice(0, 300)}\n\nWould you be open to a quick conversation to learn more?\n\nBest regards,\nHireAgent`,
+        html: `<p>Hi ${candidateName.split(" ")[0]},</p><p>I came across your profile and was impressed by your background. We have an exciting opportunity that aligns well with your experience:</p><p><em>${jobDescription.slice(0, 300)}</em></p><p>Would you be open to a quick conversation to learn more?</p><p>Best regards,<br/>HireAgent</p>`,
+      }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function aiSummary(
@@ -284,9 +346,55 @@ ${candidates.map((c) => `- ${c.name}: ${c.title} at ${c.company}. ${c.summary}`)
     // Sort by score descending
     candidates.sort((a, b) => b.score - a.score);
 
+    // Step 5: Find emails for top candidates (score >= 50)
+    for (const candidate of candidates.filter((c) => c.score >= 50)) {
+      if (candidate.company === "N/A") continue;
+
+      onEvent({
+        type: "contact",
+        message: `Finding email for ${candidate.name}...`,
+      });
+
+      const emailResult = await findEmail(mppFetch, candidate.name, candidate.company);
+      if (emailResult) {
+        candidate.email = emailResult.email;
+        candidate.emailVerified = emailResult.verified;
+        onEvent({
+          type: "spend",
+          message: `Found email for ${candidate.name}${emailResult.verified ? " (verified)" : ""}`,
+          cost: 0.01,
+        });
+      }
+    }
+
+    // Step 6: Send outreach to candidates with verified emails (score >= 70)
+    for (const candidate of candidates.filter(
+      (c) => c.score >= 70 && c.email && c.emailVerified
+    )) {
+      onEvent({
+        type: "contact",
+        message: `Sending outreach to ${candidate.name}...`,
+      });
+
+      const sent = await sendOutreach(
+        mppFetch,
+        candidate.email!,
+        candidate.name,
+        jobDescription
+      );
+      if (sent) {
+        candidate.outreachSent = true;
+        onEvent({
+          type: "spend",
+          message: `Outreach sent to ${candidate.name}`,
+          cost: 0.02,
+        });
+      }
+    }
+
     onEvent({
       type: "complete",
-      message: `Found and scored ${candidates.length} candidates`,
+      message: `Found ${candidates.length} candidates, emailed ${candidates.filter((c) => c.outreachSent).length}`,
       data: candidates,
     });
 
