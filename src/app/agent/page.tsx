@@ -20,6 +20,13 @@ interface Candidate {
   linkedinUrl?: string;
   summary: string;
   score: number;
+  reasoning: string;
+  scoreBreakdown: {
+    skills: number;
+    experience: number;
+    education: number;
+    relevance: number;
+  };
   sources: string[];
 }
 

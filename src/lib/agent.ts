@@ -19,6 +19,13 @@ export interface CandidateResult {
   linkedinUrl?: string;
   summary: string;
   score: number;
+  reasoning: string;
+  scoreBreakdown: {
+    skills: number;
+    experience: number;
+    education: number;
+    relevance: number;
+  };
   sources: string[];
 }
 
@@ -192,6 +199,8 @@ export async function runAgent(
         linkedinUrl: linkedinUrl || undefined,
         summary: stripMarkdown(result.text || enriched.bio || ""),
         score: 0,
+        reasoning: "",
+        scoreBreakdown: { skills: 0, experience: 0, education: 0, relevance: 0 },
         sources: [result.url, linkedinUrl].filter(Boolean),
       });
     }
@@ -205,7 +214,17 @@ export async function runAgent(
     const scoringPrompt = `Given this job description:
 ${jobDescription}
 
-Score these candidates from 0-100 based on fit. Return JSON array with "name" and "score" fields only.
+Score each candidate from 0-100 based on fit. For each candidate provide:
+- "name": candidate name
+- "score": overall score 0-100
+- "reasoning": 1-2 sentence explanation of why they scored this way
+- "skills": score 0-100 for relevant skills match
+- "experience": score 0-100 for years and depth of experience
+- "education": score 0-100 for educational background fit
+- "relevance": score 0-100 for overall role relevance
+
+Return ONLY a JSON array, no other text. Example format:
+[{"name":"John","score":85,"reasoning":"Strong match...","skills":90,"experience":80,"education":75,"relevance":85}]
 
 Candidates:
 ${candidates.map((c) => `- ${c.name}: ${c.title} at ${c.company}. ${c.summary}`).join("\n")}`;
@@ -224,16 +243,29 @@ ${candidates.map((c) => `- ${c.name}: ${c.title} at ${c.company}. ${c.summary}`)
         const scores = JSON.parse(jsonMatch[0]) as {
           name: string;
           score: number;
+          reasoning?: string;
+          skills?: number;
+          experience?: number;
+          education?: number;
+          relevance?: number;
         }[];
         for (const s of scores) {
-          // Fuzzy match: check if candidate name contains the scored name or vice versa
           const candidate = candidates.find(
             (c) =>
               c.name.toLowerCase() === s.name.toLowerCase() ||
               c.name.toLowerCase().includes(s.name.toLowerCase()) ||
               s.name.toLowerCase().includes(c.name.toLowerCase())
           );
-          if (candidate) candidate.score = s.score;
+          if (candidate) {
+            candidate.score = s.score;
+            candidate.reasoning = s.reasoning || "";
+            candidate.scoreBreakdown = {
+              skills: s.skills || 0,
+              experience: s.experience || 0,
+              education: s.education || 0,
+              relevance: s.relevance || 0,
+            };
+          }
         }
       }
     } catch {
@@ -242,7 +274,11 @@ ${candidates.map((c) => `- ${c.name}: ${c.title} at ${c.company}. ${c.summary}`)
 
     // Fallback: assign scores to any candidates still at 0
     candidates.forEach((c, i) => {
-      if (c.score === 0) c.score = Math.max(50 - i * 10, 10);
+      if (c.score === 0) {
+        c.score = Math.max(50 - i * 10, 10);
+        c.reasoning = "Score estimated — insufficient data for AI analysis.";
+        c.scoreBreakdown = { skills: c.score, experience: c.score, education: c.score, relevance: c.score };
+      }
     });
 
     // Sort by score descending
