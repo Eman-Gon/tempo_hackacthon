@@ -5,13 +5,13 @@ export const dynamic = "force-dynamic";
 import { useRouter } from "next/navigation";
 
 const services = [
-  { name: "Exa", desc: "AI-powered candidate search", icon: "🔍" },
-  { name: "StableEnrich", desc: "Profile enrichment", icon: "📊" },
-  { name: "Clado", desc: "LinkedIn deep research", icon: "🔬" },
-  { name: "Browserbase", desc: "Full page scraping", icon: "🌐" },
-  { name: "Perplexity", desc: "AI scoring & reasoning", icon: "🧠" },
-  { name: "Hunter", desc: "Email discovery", icon: "📧" },
-  { name: "StableEmail", desc: "Automated outreach", icon: "✉️" },
+  { name: "Exa", desc: "AI-powered candidate search" },
+  { name: "StableEnrich", desc: "Profile enrichment" },
+  { name: "Clado", desc: "LinkedIn deep research" },
+  { name: "Browserbase", desc: "Full page scraping" },
+  { name: "Perplexity", desc: "AI scoring & reasoning" },
+  { name: "Hunter", desc: "Email discovery" },
+  { name: "StableEmail", desc: "Automated outreach" },
 ];
 
 const steps = ["Search", "Enrich", "Scrape", "Score", "Find Email", "Outreach"];
@@ -30,7 +30,7 @@ export default function Home() {
         </h1>
         <p className="text-gray-500 text-lg mb-4 leading-relaxed max-w-xl mx-auto">
           An AI recruiter that autonomously finds, researches, scores, and
-          contacts candidates — paying for 7 premium data sources in real time.
+          contacts candidates, paying for 7 premium data sources in real time.
         </p>
         <p className="text-gray-400 text-sm mb-10">
           No API keys. No billing setup. Just a funded wallet and the 402
@@ -55,7 +55,6 @@ export default function Home() {
                 key={i}
                 className="bg-white border border-gray-200 rounded-xl p-4 text-left shadow-sm hover:shadow-md transition-shadow"
               >
-                <div className="text-xl mb-2">{s.icon}</div>
                 <div className="text-sm font-semibold text-[#1a1a1a]">
                   {s.name}
                 </div>
@@ -63,7 +62,6 @@ export default function Home() {
               </div>
             ))}
             <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-left shadow-sm">
-              <div className="text-xl mb-2">⚡</div>
               <div className="text-sm font-semibold text-green-700">Tempo</div>
               <div className="text-xs text-green-600/70 mt-0.5">
                 Payment layer

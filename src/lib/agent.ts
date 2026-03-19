@@ -172,7 +172,7 @@ async function sendOutreach(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         to: [to],
-        subject: `Exciting opportunity — ${jobDescription.slice(0, 60)}`,
+        subject: `Exciting opportunity: ${jobDescription.slice(0, 60)}`,
         text: `Hi ${candidateName.split(" ")[0]},\n\nI came across your profile and was impressed by your background. We have an exciting opportunity that aligns well with your experience:\n\n${jobDescription.slice(0, 300)}\n\nWould you be open to a quick conversation to learn more?\n\nBest regards,\nHireAgent`,
         html: `<p>Hi ${candidateName.split(" ")[0]},</p><p>I came across your profile and was impressed by your background. We have an exciting opportunity that aligns well with your experience:</p><p><em>${jobDescription.slice(0, 300)}</em></p><p>Would you be open to a quick conversation to learn more?</p><p>Best regards,<br/>HireAgent</p>`,
       }),
@@ -311,7 +311,7 @@ export async function runAgent(
         .replace(/\s*(Prog\.AI|getprog\.ai|Freelancer|LinkedIn).*$/i, "")
         .trim() || "N/A";
 
-      // Combine all data sources — prefer Exa text or enriched bio over raw HTML page content
+      // Combine all data sources: prefer Exa text or enriched bio over raw HTML page content
       const rawSummary = result.text || enriched.bio || linkedinData.summary || pageContent || "";
 
       candidates.push({
@@ -398,7 +398,7 @@ ${candidates.map((c) => `- ${c.name}: ${c.title} at ${c.company}. ${c.summary}`)
     candidates.forEach((c, i) => {
       if (c.score === 0) {
         c.score = Math.max(50 - i * 10, 10);
-        c.reasoning = "Score estimated — insufficient data for AI analysis.";
+        c.reasoning = "Score estimated. Insufficient data for AI analysis.";
         c.scoreBreakdown = { skills: c.score, experience: c.score, education: c.score, relevance: c.score };
       }
     });
