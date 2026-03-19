@@ -2,10 +2,10 @@ import { PrivyClient } from "@privy-io/node";
 import { toAccount } from "viem/accounts";
 import { keccak256 } from "viem";
 
-export const privy = new PrivyClient(
-  process.env.PRIVY_APP_ID!,
-  process.env.PRIVY_APP_SECRET!
-);
+export const privy = new PrivyClient({
+  appId: process.env.PRIVY_APP_ID!,
+  appSecret: process.env.PRIVY_APP_SECRET!,
+});
 
 export function createPrivyAccount(
   walletId: string,
@@ -19,7 +19,14 @@ export function createPrivyAccount(
         .ethereum()
         .signMessage(walletId, {
           message:
-            typeof message === "string" ? message : (message.raw as string),
+            typeof message === "string"
+              ? message
+              : new Uint8Array(
+                  Buffer.from(
+                    (message.raw as string).replace(/^0x/, ""),
+                    "hex"
+                  )
+                ),
         });
       return result.signature as `0x${string}`;
     },
