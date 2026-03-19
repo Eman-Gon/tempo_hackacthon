@@ -2,6 +2,11 @@ import { createMppxClient } from "./mppx";
 
 function stripMarkdown(text: string): string {
   return text
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")  // style blocks
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "") // script blocks
+    .replace(/<!DOCTYPE[^>]*>/gi, "")                 // doctype
+    .replace(/<[^>]+>/g, " ")                         // all HTML tags
+    .replace(/&[a-z]+;/gi, " ")                       // HTML entities
     .replace(/#{1,6}\s?/g, "")        // headings
     .replace(/\*{1,2}(.*?)\*{1,2}/g, "$1") // bold/italic
     .replace(/\[(.*?)\]\(.*?\)/g, "$1")     // links
@@ -10,6 +15,11 @@ function stripMarkdown(text: string): string {
     .replace(/\n{2,}/g, " ")               // multiple newlines
     .replace(/\s{2,}/g, " ")               // multiple spaces
     .trim();
+}
+
+/** Check if a URL points to a LinkedIn profile (not a post, article, or company page) */
+function isLinkedInProfile(url: string): boolean {
+  return /linkedin\.com\/in\/[^/]+\/?$/.test(url);
 }
 
 export interface CandidateResult {
@@ -208,23 +218,33 @@ export async function runAgent(
       message: "Searching for candidates matching job description...",
     });
 
-    const searchQuery = `LinkedIn profile of candidate for: ${jobDescription}`;
+    const searchQuery = `site:linkedin.com/in/ ${jobDescription}`;
     const searchResults = await searchCandidates(mppFetch, searchQuery);
+
+    // Filter to only LinkedIn profile URLs (not posts, articles, or company pages)
+    const profileResults = searchResults.filter(
+      (r: any) => r.url && (isLinkedInProfile(r.url) || !r.url.includes("linkedin.com"))
+    );
+
     onEvent({
       type: "spend",
-      message: `Found ${searchResults.length} potential candidates via Exa`,
+      message: `Found ${profileResults.length} candidate profiles via Exa`,
       cost: 0.01,
     });
 
     // Step 2: Enrich top candidates
     const candidates: CandidateResult[] = [];
-    for (const result of searchResults.slice(0, 5)) {
+    for (const result of profileResults.slice(0, 5)) {
       const rawName = result.title?.split(/[-|–—]/)[0]?.trim() || result.title || "Unknown";
-      // Strip site names and generic suffixes from the parsed name
+      // Strip site names, generic suffixes, and LinkedIn post artifacts
       const name = rawName
         .replace(/\s*[\|·]\s*.*/g, "")
         .replace(/\s*(Profile|Resume|CV|Freelancer|Prog\.AI|getprog).*$/i, "")
+        .replace(/['']s Post$/i, "")
         .trim() || rawName;
+
+      // Skip entries where the "name" is clearly not a person name (e.g. a post body)
+      if (name.length > 60 || name.split(" ").length > 6) continue;
 
       onEvent({
         type: "enrich",
@@ -291,8 +311,8 @@ export async function runAgent(
         .replace(/\s*(Prog\.AI|getprog\.ai|Freelancer|LinkedIn).*$/i, "")
         .trim() || "N/A";
 
-      // Combine all data sources for the richest summary
-      const rawSummary = pageContent || result.text || enriched.bio || "";
+      // Combine all data sources — prefer Exa text or enriched bio over raw HTML page content
+      const rawSummary = result.text || enriched.bio || linkedinData.summary || pageContent || "";
 
       candidates.push({
         name,

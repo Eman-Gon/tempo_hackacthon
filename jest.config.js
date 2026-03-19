@@ -12,6 +12,6 @@ module.exports = {
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/src/$1",
   },
-  setupFilesAfterSetup: ["<rootDir>/src/__tests__/setup.ts"],
+  setupFilesAfterEnv: ["<rootDir>/src/__tests__/setup.ts"],
   testPathIgnorePatterns: ["<rootDir>/src/__tests__/setup.ts"],
 };
