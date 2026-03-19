@@ -37,6 +37,7 @@ export default function AgentPage() {
     address: string;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [expandedCandidate, setExpandedCandidate] = useState<number | null>(null);
   const eventsEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -259,47 +260,92 @@ export default function AgentPage() {
           )}
 
           <div className="space-y-4 overflow-y-auto">
-            {candidates.map((candidate, i) => (
-              <div
-                key={i}
-                className="bg-gray-900 border border-gray-800 rounded-lg p-4"
-              >
-                <div className="flex items-start justify-between mb-2">
-                  <div>
-                    <h3 className="font-semibold text-white">
-                      {candidate.name}
-                    </h3>
-                    <p className="text-sm text-gray-400">
-                      {candidate.title} at {candidate.company}
-                    </p>
+            {candidates.map((candidate, i) => {
+              const isExpanded = expandedCandidate === i;
+              return (
+                <div
+                  key={i}
+                  onClick={() => setExpandedCandidate(isExpanded ? null : i)}
+                  className="bg-gray-900 border border-gray-800 rounded-lg p-4 cursor-pointer hover:border-indigo-500/50 transition-colors"
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <div>
+                      <h3 className="font-semibold text-white">
+                        {candidate.name}
+                      </h3>
+                      <p className="text-sm text-gray-400">
+                        {candidate.title} at {candidate.company}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={`text-lg font-bold ${
+                          candidate.score >= 80
+                            ? "text-green-400"
+                            : candidate.score >= 60
+                              ? "text-yellow-400"
+                              : "text-gray-500"
+                        }`}
+                      >
+                        {candidate.score}
+                      </div>
+                      <span className="text-gray-600 text-xs">
+                        {isExpanded ? "▲" : "▼"}
+                      </span>
+                    </div>
                   </div>
-                  <div
-                    className={`text-lg font-bold ${
-                      candidate.score >= 80
-                        ? "text-green-400"
-                        : candidate.score >= 60
-                          ? "text-yellow-400"
-                          : "text-gray-500"
-                    }`}
-                  >
-                    {candidate.score}
-                  </div>
+                  <p className={`text-sm text-gray-400 ${isExpanded ? "" : "line-clamp-3"}`}>
+                    {candidate.summary}
+                  </p>
+                  {isExpanded && (
+                    <div className="mt-4 pt-4 border-t border-gray-800 space-y-3">
+                      {candidate.title !== "N/A" && (
+                        <div>
+                          <span className="text-xs text-gray-500 uppercase tracking-wide">Role</span>
+                          <p className="text-sm text-gray-300">{candidate.title}</p>
+                        </div>
+                      )}
+                      {candidate.company !== "N/A" && (
+                        <div>
+                          <span className="text-xs text-gray-500 uppercase tracking-wide">Company</span>
+                          <p className="text-sm text-gray-300">{candidate.company}</p>
+                        </div>
+                      )}
+                      {candidate.sources.length > 0 && (
+                        <div>
+                          <span className="text-xs text-gray-500 uppercase tracking-wide">Sources</span>
+                          <div className="flex flex-col gap-1 mt-1">
+                            {candidate.sources.map((url, j) => (
+                              <a
+                                key={j}
+                                href={url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-xs text-indigo-400 hover:text-indigo-300 truncate"
+                              >
+                                {url}
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {candidate.linkedinUrl && (
+                        <a
+                          href={candidate.linkedinUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="inline-flex items-center gap-1 text-sm text-indigo-400 hover:text-indigo-300 mt-2"
+                        >
+                          View LinkedIn Profile →
+                        </a>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <p className="text-sm text-gray-400 line-clamp-3">
-                  {candidate.summary}
-                </p>
-                {candidate.linkedinUrl && (
-                  <a
-                    href={candidate.linkedinUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-indigo-400 hover:text-indigo-300 mt-2 inline-block"
-                  >
-                    LinkedIn Profile
-                  </a>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>

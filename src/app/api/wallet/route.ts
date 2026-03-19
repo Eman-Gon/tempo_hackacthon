@@ -11,9 +11,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Create a new embedded wallet (Privy auto-deduplicates if one exists)
+    // Try to find existing wallets for this user first
+    const existingWallets = await privy.wallets().list({
+      user_id: privyUserId,
+    });
+
+    if (existingWallets.data && existingWallets.data.length > 0) {
+      const wallet = existingWallets.data[0];
+      return NextResponse.json({
+        walletId: wallet.id,
+        address: wallet.address,
+      });
+    }
+
+    // Only create a new wallet if none exists
     const wallet = await privy.wallets().create({
       chain_type: "ethereum",
+      owner: { type: "user", user_id: privyUserId },
     });
 
     return NextResponse.json({
