@@ -11,28 +11,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Try to find existing wallets for this user first
-    const existingWallets = await privy.wallets().list({
-      user_id: privyUserId,
-    });
-
-    if (existingWallets.data && existingWallets.data.length > 0) {
-      const wallet = existingWallets.data[0];
-      return NextResponse.json({
-        walletId: wallet.id,
-        address: wallet.address,
-      });
-    }
-
-    // Only create a new wallet if none exists
-    const wallet = await privy.wallets().create({
-      chain_type: "ethereum",
-      owner: { type: "user", user_id: privyUserId },
-    });
+    // Use the funded wallet
+    const FUNDED_WALLET_ID = "js13iejxuggh7hr4oay0eodi";
+    const FUNDED_WALLET_ADDRESS = "0x52207fb0B18D48E4f4F69f8AeB63FC1e4fCc2FE1";
 
     return NextResponse.json({
-      walletId: wallet.id,
-      address: wallet.address,
+      walletId: FUNDED_WALLET_ID,
+      address: FUNDED_WALLET_ADDRESS,
     });
   } catch (error: any) {
     console.error("Wallet creation error:", error);
