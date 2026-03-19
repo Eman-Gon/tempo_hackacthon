@@ -52,11 +52,22 @@ describe("POST /api/research", () => {
   });
 
   it("returns candidates on success", async () => {
-    // Mock Exa search
+    // 1. Perplexity query generation
+    mockFetch.mockResolvedValueOnce({
+      json: () =>
+        Promise.resolve({
+          choices: [{ message: { content: '["senior engineer linkedin", "react developer github"]' } }],
+        }),
+    });
+    // 2. Exa search #1 (empty)
     mockFetch.mockResolvedValueOnce({
       json: () => Promise.resolve({ results: [] }),
     });
-    // Mock Perplexity scoring
+    // 2. Exa search #2 (empty)
+    mockFetch.mockResolvedValueOnce({
+      json: () => Promise.resolve({ results: [] }),
+    });
+    // 3. Perplexity pass 1 scoring
     mockFetch.mockResolvedValueOnce({
       json: () =>
         Promise.resolve({
