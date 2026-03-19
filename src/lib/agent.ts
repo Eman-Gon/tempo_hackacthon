@@ -1,5 +1,17 @@
 import { createMppxClient } from "./mppx";
 
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/#{1,6}\s?/g, "")        // headings
+    .replace(/\*{1,2}(.*?)\*{1,2}/g, "$1") // bold/italic
+    .replace(/\[(.*?)\]\(.*?\)/g, "$1")     // links
+    .replace(/`{1,3}.*?`{1,3}/g, "")       // code
+    .replace(/[-*]\s/g, "")                 // list markers
+    .replace(/\n{2,}/g, " ")               // multiple newlines
+    .replace(/\s{2,}/g, " ")               // multiple spaces
+    .trim();
+}
+
 export interface CandidateResult {
   name: string;
   title: string;
@@ -29,6 +41,13 @@ async function searchCandidates(
       num_results: 10,
       type: "neural",
       use_autoprompt: true,
+      include_domains: [
+        "linkedin.com",
+        "github.com",
+        "stackoverflow.com",
+        "medium.com",
+        "dev.to",
+      ],
       contents: { text: { max_characters: 1000 } },
     }),
   });
@@ -102,7 +121,7 @@ export async function runAgent(
       message: "Searching for candidates matching job description...",
     });
 
-    const searchQuery = `professionals matching: ${jobDescription}`;
+    const searchQuery = `LinkedIn profile of candidate for: ${jobDescription}`;
     const searchResults = await searchCandidates(mppFetch, searchQuery);
     onEvent({
       type: "spend",
@@ -113,8 +132,12 @@ export async function runAgent(
     // Step 2: Enrich top candidates
     const candidates: CandidateResult[] = [];
     for (const result of searchResults.slice(0, 5)) {
-      const name =
-        result.title?.split(/[-|–]/)[0]?.trim() || result.title || "Unknown";
+      const rawName = result.title?.split(/[-|–—]/)[0]?.trim() || result.title || "Unknown";
+      // Strip site names and generic suffixes from the parsed name
+      const name = rawName
+        .replace(/\s*[\|·]\s*.*/g, "")
+        .replace(/\s*(Profile|Resume|CV|Freelancer|Prog\.AI|getprog).*$/i, "")
+        .trim() || rawName;
 
       onEvent({
         type: "enrich",
@@ -157,13 +180,17 @@ export async function runAgent(
         }
       }
 
+      const rawCompany = enriched.company || linkedinData.company || result.author || "";
+      const company = rawCompany
+        .replace(/\s*(Prog\.AI|getprog\.ai|Freelancer|LinkedIn).*$/i, "")
+        .trim() || "N/A";
+
       candidates.push({
         name,
         title: enriched.title || linkedinData.title || "N/A",
-        company:
-          enriched.company || linkedinData.company || result.author || "N/A",
+        company,
         linkedinUrl: linkedinUrl || undefined,
-        summary: result.text || enriched.bio || "",
+        summary: stripMarkdown(result.text || enriched.bio || ""),
         score: 0,
         sources: [result.url, linkedinUrl].filter(Boolean),
       });
@@ -192,23 +219,31 @@ ${candidates.map((c) => `- ${c.name}: ${c.title} at ${c.company}. ${c.summary}`)
 
     // Parse scores
     try {
-      const jsonMatch = scoringResult.match(/\[[\s\S]*?\]/);
+      const jsonMatch = scoringResult.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         const scores = JSON.parse(jsonMatch[0]) as {
           name: string;
           score: number;
         }[];
         for (const s of scores) {
+          // Fuzzy match: check if candidate name contains the scored name or vice versa
           const candidate = candidates.find(
-            (c) => c.name.toLowerCase() === s.name.toLowerCase()
+            (c) =>
+              c.name.toLowerCase() === s.name.toLowerCase() ||
+              c.name.toLowerCase().includes(s.name.toLowerCase()) ||
+              s.name.toLowerCase().includes(c.name.toLowerCase())
           );
           if (candidate) candidate.score = s.score;
         }
       }
     } catch {
-      // fallback: assign sequential scores
-      candidates.forEach((c, i) => (c.score = 100 - i * 15));
+      // scoring parse failed
     }
+
+    // Fallback: assign scores to any candidates still at 0
+    candidates.forEach((c, i) => {
+      if (c.score === 0) c.score = Math.max(50 - i * 10, 10);
+    });
 
     // Sort by score descending
     candidates.sort((a, b) => b.score - a.score);
