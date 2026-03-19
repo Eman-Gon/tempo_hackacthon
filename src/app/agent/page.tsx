@@ -2,9 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
-import { usePrivy } from "@privy-io/react-auth";
-import { useRouter } from "next/navigation";
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 
 interface AgentEvent {
   type: "search" | "enrich" | "analyze" | "contact" | "complete" | "error" | "spend";
@@ -33,10 +31,33 @@ interface Candidate {
   sources: string[];
 }
 
-export default function AgentPage() {
-  const { authenticated, ready, user, logout } = usePrivy();
-  const router = useRouter();
+// Friendly error messages
+function friendlyError(raw: string): string {
+  if (raw.includes("InsufficientBalance")) {
+    const match = raw.match(/available: (\d+), required: (\d+)/);
+    if (match) {
+      const available = (parseInt(match[1]) / 1000000).toFixed(2);
+      const required = (parseInt(match[2]) / 1000000).toFixed(4);
+      return `Insufficient wallet balance. Available: $${available}, Required: $${required}. Please fund your wallet at wallet.tempo.xyz`;
+    }
+    return "Insufficient wallet balance. Please fund your wallet at wallet.tempo.xyz";
+  }
+  if (raw.includes("ECONNREFUSED") || raw.includes("fetch failed")) {
+    return "Unable to reach the API service. Please try again in a moment.";
+  }
+  if (raw.includes("timeout") || raw.includes("ETIMEDOUT")) {
+    return "Request timed out. The service may be temporarily busy — try again.";
+  }
+  if (raw.includes("429") || raw.includes("rate limit")) {
+    return "Rate limited by an API service. Wait a few seconds and try again.";
+  }
+  if (raw.includes("502") || raw.includes("503")) {
+    return "An API service is temporarily unavailable. Try again shortly.";
+  }
+  return raw;
+}
 
+export default function AgentPage() {
   const [jobDescription, setJobDescription] = useState("");
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
@@ -48,30 +69,69 @@ export default function AgentPage() {
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedCandidate, setExpandedCandidate] = useState<number | null>(null);
+  const [showCostBreakdown, setShowCostBreakdown] = useState(false);
   const eventsEndRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (ready && !authenticated) {
-      router.push("/");
+  // Compute cost breakdown from spend events
+  const costBreakdown = useMemo(() => {
+    const breakdown: Record<string, number> = {};
+    for (const event of events) {
+      if (event.type === "spend" && event.cost) {
+        // Extract service name from message
+        let service = "Other";
+        if (event.message.includes("Exa")) service = "Exa";
+        else if (event.message.includes("StableEnrich")) service = "StableEnrich";
+        else if (event.message.includes("LinkedIn") || event.message.includes("Clado")) service = "Clado";
+        else if (event.message.includes("Browserbase") || event.message.includes("Scraped")) service = "Browserbase";
+        else if (event.message.includes("Perplexity") || event.message.includes("scoring")) service = "Perplexity";
+        else if (event.message.includes("Hunter") || event.message.includes("email")) service = "Hunter";
+        else if (event.message.includes("Outreach") || event.message.includes("outreach")) service = "StableEmail";
+        breakdown[service] = (breakdown[service] || 0) + event.cost;
+      }
     }
-  }, [ready, authenticated, router]);
+    return breakdown;
+  }, [events]);
 
-  // Create/fetch wallet on mount
+  // CSV export
+  const exportCSV = useCallback(() => {
+    if (candidates.length === 0) return;
+    const headers = ["Name", "Title", "Company", "Score", "Reasoning", "Email", "Verified", "Outreach Sent", "LinkedIn", "Sources"];
+    const rows = candidates.map((c) => [
+      c.name,
+      c.title,
+      c.company,
+      c.score.toString(),
+      `"${(c.reasoning || "").replace(/"/g, '""')}"`,
+      c.email || "",
+      c.emailVerified ? "Yes" : "No",
+      c.outreachSent ? "Yes" : "No",
+      c.linkedinUrl || "",
+      c.sources.join("; "),
+    ]);
+    const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `hireagent-candidates-${new Date().toISOString().split("T")[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [candidates]);
+
+  // Fetch wallet on mount
   useEffect(() => {
-    if (!user?.id) return;
-
     fetch("/api/wallet", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ privyUserId: user.id }),
+      body: JSON.stringify({ privyUserId: "default" }),
     })
       .then((r) => r.json())
       .then((data) => {
         if (data.walletId) setWalletInfo(data);
-        else setError("Failed to create wallet");
+        else setError("Failed to load wallet");
       })
-      .catch(() => setError("Failed to create wallet"));
-  }, [user?.id]);
+      .catch(() => setError("Failed to load wallet"));
+  }, []);
 
   // Auto-scroll events
   useEffect(() => {
@@ -86,6 +146,7 @@ export default function AgentPage() {
     setCandidates([]);
     setTotalSpent(0);
     setError(null);
+    setShowCostBreakdown(false);
 
     try {
       const response = await fetch("/api/research/stream", {
@@ -120,6 +181,12 @@ export default function AgentPage() {
           if (!line.startsWith("data: ")) continue;
           try {
             const event = JSON.parse(line.slice(6)) as AgentEvent;
+
+            // Friendly error messages
+            if (event.type === "error") {
+              event.message = friendlyError(event.message);
+            }
+
             setEvents((prev) => [...prev, event]);
 
             if (event.cost) {
@@ -128,6 +195,7 @@ export default function AgentPage() {
 
             if (event.type === "complete" && event.data) {
               setCandidates(event.data);
+              setShowCostBreakdown(true);
             }
           } catch {
             // skip malformed SSE
@@ -135,33 +203,27 @@ export default function AgentPage() {
         }
       }
     } catch (err: any) {
-      setError(err.message || "Something went wrong");
+      setError(friendlyError(err.message || "Something went wrong"));
     } finally {
       setIsRunning(false);
     }
   }, [walletInfo, jobDescription]);
 
-  if (!ready) return <div className="flex-1 flex items-center justify-center text-gray-500">Loading...</div>;
+  if (!walletInfo && !error) return <div className="flex-1 flex items-center justify-center text-gray-500">Loading...</div>;
 
   return (
     <main className="flex-1 flex flex-col max-w-6xl mx-auto w-full px-6 py-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
-        <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">
+        <a href="/" className="text-2xl font-bold bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent hover:opacity-80 transition-opacity">
           HireAgent
-        </h1>
+        </a>
         <div className="flex items-center gap-4">
           {walletInfo && (
             <span className="text-xs text-gray-500 font-mono">
               {walletInfo.address.slice(0, 6)}...{walletInfo.address.slice(-4)}
             </span>
           )}
-          <button
-            onClick={logout}
-            className="text-sm text-gray-400 hover:text-white transition-colors"
-          >
-            Sign out
-          </button>
         </div>
       </div>
 
@@ -241,23 +303,65 @@ export default function AgentPage() {
             </div>
           </div>
 
+          {/* Cost Breakdown */}
+          {showCostBreakdown && Object.keys(costBreakdown).length > 0 && (
+            <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm font-medium text-gray-300">Cost Breakdown</span>
+                <span className="text-sm font-bold text-indigo-400">${totalSpent.toFixed(4)} total</span>
+              </div>
+              <div className="space-y-2">
+                {Object.entries(costBreakdown)
+                  .sort(([, a], [, b]) => b - a)
+                  .map(([service, cost]) => {
+                    const pct = totalSpent > 0 ? (cost / totalSpent) * 100 : 0;
+                    return (
+                      <div key={service} className="flex items-center gap-3">
+                        <span className="text-xs text-gray-400 w-24">{service}</span>
+                        <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-indigo-500 rounded-full"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                        <span className="text-xs text-gray-400 w-16 text-right">
+                          ${cost.toFixed(4)}
+                        </span>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
+
           {error && (
-            <div className="bg-red-900/30 border border-red-800 rounded-lg p-3 text-red-400 text-sm">
-              {error}
+            <div className="bg-red-900/30 border border-red-800 rounded-lg p-4 text-red-400 text-sm">
+              <div className="font-medium mb-1">Something went wrong</div>
+              <div>{error}</div>
             </div>
           )}
         </div>
 
         {/* Right: Results */}
         <div className="flex flex-col gap-4">
-          <h2 className="text-lg font-semibold text-gray-200">
-            Candidates
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-gray-200">
+              Candidates
+              {candidates.length > 0 && (
+                <span className="text-gray-500 font-normal ml-2">
+                  ({candidates.length})
+                </span>
+              )}
+            </h2>
             {candidates.length > 0 && (
-              <span className="text-gray-500 font-normal ml-2">
-                ({candidates.length})
-              </span>
+              <button
+                onClick={exportCSV}
+                className="text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1.5 rounded-lg transition-colors"
+              >
+                Export CSV
+              </button>
             )}
-          </h2>
+          </div>
 
           {candidates.length === 0 && !isRunning && (
             <div className="flex-1 flex items-center justify-center text-gray-600">
@@ -302,16 +406,33 @@ export default function AgentPage() {
                       </p>
                     </div>
                     <div className="flex items-center gap-3">
-                      <div
-                        className={`text-lg font-bold ${
+                      {/* Score ring */}
+                      <div className="relative w-12 h-12">
+                        <svg className="w-12 h-12 -rotate-90" viewBox="0 0 36 36">
+                          <circle cx="18" cy="18" r="15.5" fill="none" stroke="#1f2937" strokeWidth="3" />
+                          <circle
+                            cx="18" cy="18" r="15.5" fill="none"
+                            strokeWidth="3"
+                            strokeDasharray={`${candidate.score * 0.975} 100`}
+                            strokeLinecap="round"
+                            className={
+                              candidate.score >= 80
+                                ? "stroke-green-500"
+                                : candidate.score >= 60
+                                  ? "stroke-yellow-500"
+                                  : "stroke-gray-500"
+                            }
+                          />
+                        </svg>
+                        <span className={`absolute inset-0 flex items-center justify-center text-xs font-bold ${
                           candidate.score >= 80
                             ? "text-green-400"
                             : candidate.score >= 60
                               ? "text-yellow-400"
                               : "text-gray-500"
-                        }`}
-                      >
-                        {candidate.score}
+                        }`}>
+                          {candidate.score}
+                        </span>
                       </div>
                       <span className="text-gray-600 text-xs">
                         {isExpanded ? "▲" : "▼"}
@@ -433,7 +554,7 @@ export default function AgentPage() {
                             onClick={(e) => e.stopPropagation()}
                             className="inline-flex items-center gap-1 text-sm text-indigo-400 hover:text-indigo-300"
                           >
-                            LinkedIn →
+                            LinkedIn &#8594;
                           </a>
                         )}
                       </div>

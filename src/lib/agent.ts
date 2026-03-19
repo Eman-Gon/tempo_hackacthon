@@ -113,25 +113,6 @@ async function fetchPage(
   }
 }
 
-async function verifyEmail(
-  mppFetch: typeof fetch,
-  email: string
-): Promise<boolean> {
-  try {
-    const response = await mppFetch(
-      "https://hunter.mpp.paywithlocus.com/hunter/email-verifier",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      }
-    );
-    const data = await response.json();
-    return data.data?.status === "valid" || data.data?.result === "deliverable";
-  } catch {
-    return false;
-  }
-}
 
 async function findEmail(
   mppFetch: typeof fetch,
@@ -417,23 +398,11 @@ ${candidates.map((c) => `- ${c.name}: ${c.title} at ${c.company}. ${c.summary}`)
       const emailResult = await findEmail(mppFetch, candidate.name, candidate.company);
       if (emailResult) {
         candidate.email = emailResult.email;
+        candidate.emailVerified = emailResult.verified;
         onEvent({
           type: "spend",
-          message: `Found email for ${candidate.name} via Hunter`,
+          message: `Found email for ${candidate.name}${emailResult.verified ? " (verified)" : ""} via Hunter`,
           cost: 0.01,
-        });
-
-        // Step 5b: Verify email via Hunter
-        onEvent({
-          type: "contact",
-          message: `Verifying email for ${candidate.name}...`,
-        });
-        const isVerified = await verifyEmail(mppFetch, emailResult.email);
-        candidate.emailVerified = isVerified;
-        onEvent({
-          type: "spend",
-          message: `Email ${isVerified ? "verified" : "unverified"} for ${candidate.name}`,
-          cost: 0.005,
         });
       }
     }

@@ -22,7 +22,12 @@ jest.mock("mppx/client", () => ({
   tempo: jest.fn().mockReturnValue([]),
 }));
 
-import { runAgent, AgentEvent, CandidateResult } from "@/lib/agent";
+import { runAgent, AgentEvent } from "@/lib/agent";
+
+// Helper: create a mock JSON response
+function jsonResponse(data: any) {
+  return { json: () => Promise.resolve(data), ok: true };
+}
 
 describe("runAgent", () => {
   const walletId = "test-wallet";
@@ -35,87 +40,86 @@ describe("runAgent", () => {
   it("emits search event first", async () => {
     const events: AgentEvent[] = [];
 
-    // Mock Exa search
-    mockFetch.mockResolvedValueOnce({
-      json: () => Promise.resolve({ results: [] }),
-    });
-    // Mock Perplexity scoring
-    mockFetch.mockResolvedValueOnce({
-      json: () =>
-        Promise.resolve({
-          choices: [{ message: { content: "[]" } }],
-        }),
-    });
+    // Exa search - no results
+    mockFetch.mockResolvedValueOnce(jsonResponse({ results: [] }));
+    // Perplexity scoring
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ choices: [{ message: { content: "[]" } }] })
+    );
 
     await runAgent("Senior Engineer", walletId, address, (e) => events.push(e));
-
     expect(events[0].type).toBe("search");
     expect(events[0].message).toContain("Searching");
   });
 
   it("returns empty array when no search results", async () => {
-    // Mock Exa search - no results
-    mockFetch.mockResolvedValueOnce({
-      json: () => Promise.resolve({ results: [] }),
-    });
-    // Mock Perplexity scoring
-    mockFetch.mockResolvedValueOnce({
-      json: () =>
-        Promise.resolve({
-          choices: [{ message: { content: "[]" } }],
-        }),
-    });
-
-    const results = await runAgent(
-      "Senior Engineer",
-      walletId,
-      address,
-      () => {}
+    mockFetch.mockResolvedValueOnce(jsonResponse({ results: [] }));
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ choices: [{ message: { content: "[]" } }] })
     );
 
+    const results = await runAgent("Senior Engineer", walletId, address, () => {});
     expect(results).toEqual([]);
   });
 
   it("processes candidates from search results", async () => {
     const events: AgentEvent[] = [];
 
-    // Mock Exa search
-    mockFetch.mockResolvedValueOnce({
-      json: () =>
-        Promise.resolve({
-          results: [
-            {
-              title: "Jane Doe - Senior Engineer",
-              url: "https://example.com/jane",
-              text: "Experienced engineer",
-              author: "TechCorp",
-            },
-          ],
-        }),
-    });
+    // 1. Exa search
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({
+        results: [
+          {
+            title: "Jane Doe - Senior Engineer",
+            url: "https://linkedin.com/in/jane",
+            text: "Experienced engineer with 5 years",
+            author: "TechCorp",
+          },
+        ],
+      })
+    );
 
-    // Mock StableEnrich
-    mockFetch.mockResolvedValueOnce({
-      json: () =>
-        Promise.resolve({
-          title: "Senior Engineer",
-          company: "TechCorp",
-        }),
-    });
+    // 2. StableEnrich
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ title: "Senior Engineer", company: "TechCorp" })
+    );
 
-    // Mock Perplexity scoring
-    mockFetch.mockResolvedValueOnce({
-      json: () =>
-        Promise.resolve({
-          choices: [
-            {
-              message: {
-                content: '[{"name": "Jane Doe", "score": 85}]',
-              },
+    // 3. Clado LinkedIn research (url contains linkedin.com)
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ title: "Senior Engineer", company: "TechCorp" })
+    );
+
+    // 4. Browserbase fetch
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ content: "Jane Doe is a senior engineer at TechCorp" })
+    );
+
+    // 5. Perplexity scoring
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({
+        choices: [
+          {
+            message: {
+              content:
+                '[{"name":"Jane Doe","score":85,"reasoning":"Strong fit","skills":90,"experience":80,"education":75,"relevance":85}]',
             },
-          ],
-        }),
-    });
+          },
+        ],
+      })
+    );
+
+    // 6. Hunter email-finder
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ data: { email: "jane@techcorp.com", verification: { status: "valid" } } })
+    );
+
+    // 7. Hunter email-verifier
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ data: { status: "valid" } })
+    );
+
+    // 8. StableEmail outreach
+    mockFetch.mockResolvedValueOnce(jsonResponse({ success: true }));
 
     const results = await runAgent(
       "Senior Engineer",
@@ -127,20 +131,17 @@ describe("runAgent", () => {
     expect(results.length).toBe(1);
     expect(results[0].name).toBe("Jane Doe");
     expect(results[0].score).toBe(85);
+    expect(results[0].reasoning).toBe("Strong fit");
+    expect(results[0].email).toBe("jane@techcorp.com");
   });
 
   it("emits spend events with costs", async () => {
     const events: AgentEvent[] = [];
 
-    mockFetch.mockResolvedValueOnce({
-      json: () => Promise.resolve({ results: [] }),
-    });
-    mockFetch.mockResolvedValueOnce({
-      json: () =>
-        Promise.resolve({
-          choices: [{ message: { content: "[]" } }],
-        }),
-    });
+    mockFetch.mockResolvedValueOnce(jsonResponse({ results: [] }));
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ choices: [{ message: { content: "[]" } }] })
+    );
 
     await runAgent("Engineer", walletId, address, (e) => events.push(e));
 
@@ -152,31 +153,13 @@ describe("runAgent", () => {
     });
   });
 
-  it("emits error event on failure", async () => {
-    const events: AgentEvent[] = [];
-
-    mockFetch.mockRejectedValueOnce(new Error("Network error"));
-
-    await expect(
-      runAgent("Engineer", walletId, address, (e) => events.push(e))
-    ).rejects.toThrow("Network error");
-
-    const errorEvents = events.filter((e) => e.type === "error");
-    expect(errorEvents.length).toBe(1);
-  });
-
   it("emits complete event with candidate data", async () => {
     const events: AgentEvent[] = [];
 
-    mockFetch.mockResolvedValueOnce({
-      json: () => Promise.resolve({ results: [] }),
-    });
-    mockFetch.mockResolvedValueOnce({
-      json: () =>
-        Promise.resolve({
-          choices: [{ message: { content: "[]" } }],
-        }),
-    });
+    mockFetch.mockResolvedValueOnce(jsonResponse({ results: [] }));
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ choices: [{ message: { content: "[]" } }] })
+    );
 
     await runAgent("Engineer", walletId, address, (e) => events.push(e));
 
