@@ -1,5 +1,6 @@
 "use client";
 
+import { usePrivy } from "@privy-io/react-auth";
 import {
   createContext,
   useCallback,
@@ -9,6 +10,43 @@ import {
   useState,
 } from "react";
 import type { AgentEvent, Candidate } from "@/lib/types";
+
+const STORAGE_KEY = "hireagent-state";
+
+export interface SearchRecord {
+  id: string;
+  jobDescription: string;
+  candidates: Candidate[];
+  events: AgentEvent[];
+  totalSpent: number;
+  timestamp: number;
+}
+
+interface PersistedState {
+  jobDescription: string;
+  events: AgentEvent[];
+  candidates: Candidate[];
+  totalSpent: number;
+  searchHistory: SearchRecord[];
+}
+
+function loadState(): PersistedState | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as PersistedState;
+  } catch {
+    return null;
+  }
+}
+
+function saveState(state: PersistedState) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // storage full or unavailable
+  }
+}
 
 function friendlyError(raw: string): string {
   if (raw.includes("InsufficientBalance")) {
@@ -31,6 +69,10 @@ function friendlyError(raw: string): string {
   return raw;
 }
 
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 interface AgentContextValue {
   jobDescription: string;
   setJobDescription: (v: string) => void;
@@ -38,6 +80,7 @@ interface AgentContextValue {
   candidates: Candidate[];
   isRunning: boolean;
   totalSpent: number;
+  isWalletLoading: boolean;
   walletInfo: { walletId: string; address: string } | null;
   error: string | null;
   costBreakdown: Record<string, number>;
@@ -45,7 +88,9 @@ interface AgentContextValue {
   topScore: number;
   emailsFound: number;
   contacted: number;
-  runResearch: () => Promise<void>;
+  searchHistory: SearchRecord[];
+  loadSearch: (id: string) => void;
+  runResearch: (overrideDescription?: string) => Promise<void>;
   exportCSV: () => void;
 }
 
@@ -57,17 +102,57 @@ export function useAgent() {
   return ctx;
 }
 
-export function AgentProvider({ children }: { children: React.ReactNode }) {
+export function AgentProvider({
+  children,
+  privyUserId,
+}: {
+  children: React.ReactNode;
+  privyUserId: string;
+}) {
+  const { getAccessToken } = usePrivy();
   const [jobDescription, setJobDescription] = useState("");
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [totalSpent, setTotalSpent] = useState(0);
+  const [isWalletLoading, setIsWalletLoading] = useState(false);
   const [walletInfo, setWalletInfo] = useState<{
     walletId: string;
     address: string;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [searchHistory, setSearchHistory] = useState<SearchRecord[]>([]);
+  const [hydrated, setHydrated] = useState(false);
+
+  /* ---- restore from localStorage on mount ---- */
+  useEffect(() => {
+    const saved = loadState();
+    if (saved) {
+      setJobDescription(saved.jobDescription);
+      setEvents(saved.events);
+      setCandidates(saved.candidates);
+      setTotalSpent(saved.totalSpent);
+      setSearchHistory(saved.searchHistory || []);
+    }
+    setHydrated(true);
+  }, []);
+
+  /* ---- persist to localStorage on change ---- */
+  useEffect(() => {
+    if (!hydrated) return;
+    saveState({ jobDescription, events, candidates, totalSpent, searchHistory });
+  }, [hydrated, jobDescription, events, candidates, totalSpent, searchHistory]);
+
+  /* ---- load a past search ---- */
+  const loadSearch = useCallback((id: string) => {
+    const record = searchHistory.find((s) => s.id === id);
+    if (record) {
+      setJobDescription(record.jobDescription);
+      setEvents(record.events);
+      setCandidates(record.candidates);
+      setTotalSpent(record.totalSpent);
+    }
+  }, [searchHistory]);
 
   /* ---- derived ---- */
   const costBreakdown = useMemo(() => {
@@ -163,39 +248,92 @@ export function AgentProvider({ children }: { children: React.ReactNode }) {
 
   /* ---- fetch wallet on mount ---- */
   useEffect(() => {
-    fetch("/api/wallet", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ privyUserId: "default" }),
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.walletId) setWalletInfo(data);
-        else setError("Failed to load wallet");
-      })
-      .catch(() => setError("Failed to load wallet"));
-  }, []);
+    if (!privyUserId) return;
+
+    let cancelled = false;
+
+    const loadWallet = async () => {
+      setIsWalletLoading(true);
+      setWalletInfo(null);
+      setError(null);
+
+      try {
+        const accessToken = await getAccessToken();
+        const response = await fetch("/api/wallet", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(accessToken
+              ? { Authorization: `Bearer ${accessToken}` }
+              : {}),
+          },
+          body: JSON.stringify({ privyUserId }),
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to load wallet");
+        }
+
+        if (cancelled) return;
+        setWalletInfo(data);
+      } catch (error: unknown) {
+        if (cancelled) return;
+        setWalletInfo(null);
+        setError(
+          friendlyError(getErrorMessage(error, "Failed to load wallet"))
+        );
+      } finally {
+        if (!cancelled) {
+          setIsWalletLoading(false);
+        }
+      }
+    };
+
+    void loadWallet();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [getAccessToken, privyUserId]);
 
   /* ---- run research ---- */
-  const runResearch = useCallback(async () => {
-    if (!walletInfo || !jobDescription.trim()) return;
+  const runResearch = useCallback(async (overrideDescription?: string) => {
+    const desc = overrideDescription ?? jobDescription;
+    if (!walletInfo || !desc.trim()) return;
+    if (overrideDescription) setJobDescription(overrideDescription);
     setIsRunning(true);
     setEvents([]);
     setCandidates([]);
     setTotalSpent(0);
     setError(null);
 
+    const collectedEvents: AgentEvent[] = [];
+    let collectedCandidates: Candidate[] = [];
+    let collectedCost = 0;
+
     try {
       const response = await fetch("/api/research/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          jobDescription,
+          jobDescription: desc,
           walletId: walletInfo.walletId,
           address: walletInfo.address,
         }),
       });
-      if (!response.ok) throw new Error("Research request failed");
+      if (!response.ok) {
+        let message = "Research request failed";
+        try {
+          const data = (await response.json()) as { error?: string };
+          if (data.error) {
+            message = data.error;
+          }
+        } catch {
+          // Ignore parse errors and keep fallback message.
+        }
+        throw new Error(message);
+      }
 
       const reader = response.body?.getReader();
       if (!reader) throw new Error("No response stream");
@@ -217,19 +355,38 @@ export function AgentProvider({ children }: { children: React.ReactNode }) {
             const event = JSON.parse(line.slice(6)) as AgentEvent;
             if (event.type === "error")
               event.message = friendlyError(event.message);
+            collectedEvents.push(event);
             setEvents((prev) => [...prev, event]);
-            if (event.cost) setTotalSpent((prev) => prev + event.cost!);
-            if (event.type === "complete" && event.data)
+            if (event.cost) {
+              collectedCost += event.cost;
+              setTotalSpent((prev) => prev + event.cost!);
+            }
+            if (event.type === "complete" && event.data) {
+              collectedCandidates = event.data;
               setCandidates(event.data);
+            }
           } catch {
             /* skip malformed SSE */
           }
         }
       }
-    } catch (err: any) {
-      setError(friendlyError(err.message || "Something went wrong"));
+    } catch (error: unknown) {
+      setError(friendlyError(getErrorMessage(error, "Something went wrong")));
     } finally {
       setIsRunning(false);
+
+      // Save to search history if we got results
+      if (collectedCandidates.length > 0) {
+        const record: SearchRecord = {
+          id: Date.now().toString(),
+          jobDescription: desc,
+          candidates: collectedCandidates,
+          events: collectedEvents,
+          totalSpent: collectedCost,
+          timestamp: Date.now(),
+        };
+        setSearchHistory((prev) => [record, ...prev].slice(0, 20));
+      }
     }
   }, [walletInfo, jobDescription]);
 
@@ -241,6 +398,7 @@ export function AgentProvider({ children }: { children: React.ReactNode }) {
       candidates,
       isRunning,
       totalSpent,
+      isWalletLoading,
       walletInfo,
       error,
       costBreakdown,
@@ -248,6 +406,8 @@ export function AgentProvider({ children }: { children: React.ReactNode }) {
       topScore,
       emailsFound,
       contacted,
+      searchHistory,
+      loadSearch,
       runResearch,
       exportCSV,
     }),
@@ -257,6 +417,7 @@ export function AgentProvider({ children }: { children: React.ReactNode }) {
       candidates,
       isRunning,
       totalSpent,
+      isWalletLoading,
       walletInfo,
       error,
       costBreakdown,
@@ -264,6 +425,8 @@ export function AgentProvider({ children }: { children: React.ReactNode }) {
       topScore,
       emailsFound,
       contacted,
+      searchHistory,
+      loadSearch,
       runResearch,
       exportCSV,
     ]

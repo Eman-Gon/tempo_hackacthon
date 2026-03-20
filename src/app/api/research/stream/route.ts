@@ -1,5 +1,26 @@
 import { NextRequest } from "next/server";
 import { runAgent, AgentEvent } from "@/lib/agent";
+import { createMppxClient } from "@/lib/mppx";
+
+async function chargeSearchFee(
+  request: NextRequest,
+  walletId: string,
+  address: `0x${string}`
+) {
+  const mppx = createMppxClient(walletId, address);
+  const feeUrl = new URL("/api/pay/search-fee", request.url).toString();
+
+  const response = await mppx.fetch(feeUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ walletId }),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || "Search fee payment failed");
+  }
+}
 
 export async function POST(req: NextRequest) {
   const { jobDescription, walletId, address } = await req.json();
@@ -10,6 +31,21 @@ export async function POST(req: NextRequest) {
         error: "jobDescription, walletId, and address are required",
       }),
       { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  try {
+    await chargeSearchFee(req, walletId, address as `0x${string}`);
+  } catch (error: unknown) {
+    const message =
+      error instanceof Error ? error.message : "Search fee payment failed";
+    const status = message.includes("InsufficientBalance") ? 402 : 500;
+
+    return new Response(
+      JSON.stringify({
+        error: message,
+      }),
+      { status, headers: { "Content-Type": "application/json" } }
     );
   }
 
@@ -33,10 +69,12 @@ export async function POST(req: NextRequest) {
             `data: ${JSON.stringify({ type: "complete", data: candidates })}\n\n`
           )
         );
-      } catch (error: any) {
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : "Research stream failed";
         controller.enqueue(
           encoder.encode(
-            `data: ${JSON.stringify({ type: "error", message: error.message })}\n\n`
+            `data: ${JSON.stringify({ type: "error", message })}\n\n`
           )
         );
       } finally {

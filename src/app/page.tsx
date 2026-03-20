@@ -3,6 +3,7 @@
 export const dynamic = "force-dynamic";
 
 import { useRouter } from "next/navigation";
+import { usePrivy } from "@privy-io/react-auth";
 
 const services = [
   { name: "Exa", desc: "AI-powered candidate search" },
@@ -18,6 +19,15 @@ const steps = ["Search", "Enrich", "Scrape", "Score", "Find Email", "Outreach"];
 
 export default function Home() {
   const router = useRouter();
+  const { ready, authenticated, login } = usePrivy();
+
+  const handleCTA = () => {
+    if (authenticated) {
+      router.push("/agent");
+    } else {
+      login();
+    }
+  };
 
   return (
     <main className="flex-1 flex items-center justify-center px-6 py-16">
@@ -37,11 +47,23 @@ export default function Home() {
           protocol.
         </p>
 
+        <div className="mx-auto mb-10 max-w-2xl rounded-2xl border border-green-200 bg-green-50/80 p-4 text-left shadow-sm">
+          <div className="text-sm font-semibold text-green-800">
+            Hackathon demo disclosure
+          </div>
+          <div className="mt-2 text-sm leading-6 text-green-900/80">
+            Each search charges a fixed $0.70 access fee first. After that,
+            provider costs are charged from your wallet while the search is
+            running.
+          </div>
+        </div>
+
         <button
-          onClick={() => router.push("/agent")}
-          className="px-10 py-4 bg-green-600 hover:bg-green-700 rounded-xl font-semibold text-white transition-all text-lg shadow-lg shadow-green-600/20 hover:shadow-green-600/30 hover:scale-[1.02] active:scale-95"
+          onClick={handleCTA}
+          disabled={!ready}
+          className="px-10 py-4 bg-green-600 hover:bg-green-700 disabled:opacity-50 rounded-xl font-semibold text-white transition-all text-lg shadow-lg shadow-green-600/20 hover:shadow-green-600/30 hover:scale-[1.02] active:scale-95"
         >
-          Start Researching
+          {authenticated ? "Go to Dashboard" : "Get Started"}
         </button>
 
         {/* Service cards */}

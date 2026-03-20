@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { usePrivy } from "@privy-io/react-auth";
 import { Icons } from "@/lib/icons";
 import { AgentProvider, useAgent } from "./context";
 
@@ -16,6 +17,7 @@ const navItems = [
 function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { walletInfo, events, candidates, totalSpent, costBreakdown, topScore, emailsFound } = useAgent();
+  const { logout, user } = usePrivy();
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#f8f8f8]">
@@ -56,8 +58,8 @@ function Shell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
 
-        {walletInfo && (
-          <div className="px-4 py-4 border-t border-gray-100">
+        <div className="px-4 py-4 border-t border-gray-100 space-y-3">
+          {walletInfo && (
             <div className="flex items-center gap-2.5">
               {Icons.wallet}
               <div className="min-w-0">
@@ -70,8 +72,14 @@ function Shell({ children }: { children: React.ReactNode }) {
                 </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
+          <button
+            onClick={logout}
+            className="w-full text-left text-xs text-gray-400 hover:text-red-500 transition-colors"
+          >
+            Sign out
+          </button>
+        </div>
       </aside>
 
       {/* MAIN */}
@@ -96,7 +104,7 @@ function Shell({ children }: { children: React.ReactNode }) {
               )}
             </button>
             <div className="w-8 h-8 rounded-full bg-green-100 text-green-600 flex items-center justify-center font-semibold text-sm">
-              U
+              {user?.email?.address?.[0]?.toUpperCase() || "U"}
             </div>
           </div>
         </header>
@@ -160,14 +168,67 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const { ready, authenticated, login, user } = usePrivy();
+
+  if (!ready) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#f8f8f8]">
+        <div className="w-6 h-6 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!authenticated) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#f8f8f8]">
+        <div className="max-w-md w-full bg-white rounded-2xl border border-gray-200 p-8 shadow-sm text-center">
+          <div className="w-14 h-14 rounded-xl bg-green-600 flex items-center justify-center text-white font-bold text-2xl mx-auto mb-5">
+            H
+          </div>
+          <h1 className="text-2xl font-bold text-[#1a1a1a] mb-2">
+            Welcome to HireAgent
+          </h1>
+          <p className="text-gray-500 text-sm mb-6">
+            Continue to create your wallet and start searching for candidates.
+            Each run starts with a $0.70 access fee, then provider spend happens
+            in real time while calls are running.
+          </p>
+          <div className="rounded-xl border border-gray-200 bg-[#f8f8f8] p-4 text-left">
+            <div className="text-xs font-semibold uppercase tracking-wide text-[#1a1a1a]">
+              Before you continue
+            </div>
+            <div className="mt-2 text-xs leading-5 text-gray-500">
+              A wallet is created first, then each search charges a fixed $0.70
+              access fee. Variable provider costs are charged from your wallet
+              during the run and results are shown in this dashboard.
+            </div>
+          </div>
+          <button
+            onClick={login}
+            className="w-full py-3 bg-green-600 hover:bg-green-700 rounded-xl font-semibold text-white text-sm transition-colors shadow-sm"
+          >
+            Continue
+          </button>
+          <p className="text-xs text-gray-400 mt-4">
+            Powered by Privy. A wallet will be created for you automatically.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <AgentProvider privyUserId={user?.id || ""}>
+      <Shell>{children}</Shell>
+    </AgentProvider>
+  );
+}
+
 export default function AgentLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return (
-    <AgentProvider>
-      <Shell>{children}</Shell>
-    </AgentProvider>
-  );
+  return <AuthGate>{children}</AuthGate>;
 }
