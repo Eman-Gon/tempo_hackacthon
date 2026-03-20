@@ -3,7 +3,6 @@
 export const dynamic = "force-dynamic";
 
 import { useRouter } from "next/navigation";
-import { usePrivy } from "@privy-io/react-auth";
 
 const services = [
   { name: "Exa", desc: "AI-powered candidate search" },
@@ -19,14 +18,9 @@ const steps = ["Search", "Enrich", "Scrape", "Score", "Find Email", "Outreach"];
 
 export default function Home() {
   const router = useRouter();
-  const { ready, authenticated, login } = usePrivy();
 
   const handleCTA = () => {
-    if (authenticated) {
-      router.push("/agent");
-    } else {
-      login();
-    }
+    router.push("/agent");
   };
 
   return (
@@ -60,10 +54,9 @@ export default function Home() {
 
         <button
           onClick={handleCTA}
-          disabled={!ready}
-          className="px-10 py-4 bg-green-600 hover:bg-green-700 disabled:opacity-50 rounded-xl font-semibold text-white transition-all text-lg shadow-lg shadow-green-600/20 hover:shadow-green-600/30 hover:scale-[1.02] active:scale-95"
+          className="px-10 py-4 bg-green-600 hover:bg-green-700 rounded-xl font-semibold text-white transition-all text-lg shadow-lg shadow-green-600/20 hover:shadow-green-600/30 hover:scale-[1.02] active:scale-95"
         >
-          {authenticated ? "Go to Dashboard" : "Get Started"}
+          Get Started
         </button>
 
         {/* Service cards */}

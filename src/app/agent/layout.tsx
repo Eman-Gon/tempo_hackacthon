@@ -1,8 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { usePrivy } from "@privy-io/react-auth";
+import { useGuestAccounts, usePrivy } from "@privy-io/react-auth";
 import { Icons } from "@/lib/icons";
 import { AgentProvider, useAgent } from "./context";
 
@@ -17,7 +18,6 @@ const navItems = [
 function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { walletInfo, events, candidates, totalSpent, costBreakdown, topScore, emailsFound } = useAgent();
-  const { logout, user } = usePrivy();
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#f8f8f8]">
@@ -73,12 +73,6 @@ function Shell({ children }: { children: React.ReactNode }) {
               </div>
             </div>
           )}
-          <button
-            onClick={logout}
-            className="w-full text-left text-xs text-gray-400 hover:text-red-500 transition-colors"
-          >
-            Sign out
-          </button>
         </div>
       </aside>
 
@@ -104,7 +98,7 @@ function Shell({ children }: { children: React.ReactNode }) {
               )}
             </button>
             <div className="w-8 h-8 rounded-full bg-green-100 text-green-600 flex items-center justify-center font-semibold text-sm">
-              {user?.email?.address?.[0]?.toUpperCase() || "U"}
+              {walletInfo?.address?.[2]?.toUpperCase() || "U"}
             </div>
           </div>
         </header>
@@ -169,12 +163,43 @@ function Shell({ children }: { children: React.ReactNode }) {
 }
 
 function AuthGate({ children }: { children: React.ReactNode }) {
-  const { ready, authenticated, login, user } = usePrivy();
+  const { ready, authenticated, user } = usePrivy();
+  const { createGuestAccount } = useGuestAccounts();
+  const [authError, setAuthError] = useState<string | null>(null);
 
-  if (!ready) {
+  useEffect(() => {
+    if (!ready || authenticated) return;
+
+    let cancelled = false;
+
+    const createGuest = async () => {
+      try {
+        setAuthError(null);
+        await createGuestAccount();
+      } catch (error: unknown) {
+        if (cancelled) return;
+        setAuthError(
+          error instanceof Error
+            ? error.message
+            : "Unable to initialize guest session"
+        );
+      }
+    };
+
+    void createGuest();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authenticated, createGuestAccount, ready]);
+
+  if (!ready || (!authenticated && !authError)) {
     return (
       <div className="flex h-screen items-center justify-center bg-[#f8f8f8]">
-        <div className="w-6 h-6 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
+        <div className="text-center">
+          <div className="mx-auto mb-3 w-6 h-6 border-2 border-green-600 border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm text-gray-500">Setting up wallet session...</p>
+        </div>
       </div>
     );
   }
@@ -186,33 +211,29 @@ function AuthGate({ children }: { children: React.ReactNode }) {
           <div className="w-14 h-14 rounded-xl bg-green-600 flex items-center justify-center text-white font-bold text-2xl mx-auto mb-5">
             H
           </div>
-          <h1 className="text-2xl font-bold text-[#1a1a1a] mb-2">
-            Welcome to HireAgent
-          </h1>
           <p className="text-gray-500 text-sm mb-6">
-            Continue to create your wallet and start searching for candidates.
-            Each run starts with a $0.70 access fee, then provider spend happens
-            in real time while calls are running.
+            Unable to initialize wallet session automatically.
           </p>
-          <div className="rounded-xl border border-gray-200 bg-[#f8f8f8] p-4 text-left">
-            <div className="text-xs font-semibold uppercase tracking-wide text-[#1a1a1a]">
-              Before you continue
-            </div>
-            <div className="mt-2 text-xs leading-5 text-gray-500">
-              A wallet is created first, then each search charges a fixed $0.70
-              access fee. Variable provider costs are charged from your wallet
-              during the run and results are shown in this dashboard.
+          <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-left">
+            <div className="text-xs leading-5 text-red-700">
+              {authError || "Please try again."}
             </div>
           </div>
           <button
-            onClick={login}
+            onClick={() => {
+              setAuthError(null);
+              void createGuestAccount().catch((error: unknown) => {
+                setAuthError(
+                  error instanceof Error
+                    ? error.message
+                    : "Unable to initialize guest session"
+                );
+              });
+            }}
             className="w-full py-3 bg-green-600 hover:bg-green-700 rounded-xl font-semibold text-white text-sm transition-colors shadow-sm"
           >
-            Continue
+            Retry
           </button>
-          <p className="text-xs text-gray-400 mt-4">
-            Powered by Privy. A wallet will be created for you automatically.
-          </p>
         </div>
       </div>
     );
