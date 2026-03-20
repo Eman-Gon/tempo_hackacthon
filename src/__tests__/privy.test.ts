@@ -1,33 +1,57 @@
-import { createPrivyAccount } from "@/lib/privy";
+const mockSignMessage = jest.fn();
+const mockSignSecp256k1 = jest.fn();
+const mockSignTypedData = jest.fn();
+const mockGetUser = jest.fn();
+const mockPregenerateWallets = jest.fn();
+const mockVerifyAccessToken = jest.fn();
 
-// Mock the PrivyClient
 jest.mock("@privy-io/node", () => ({
   PrivyClient: jest.fn().mockImplementation(() => ({
     wallets: () => ({
       ethereum: () => ({
-        signMessage: jest.fn().mockResolvedValue({
-          signature: "0xmocksignature123",
-        }),
-        signSecp256k1: jest.fn().mockResolvedValue({
-          signature: "0xmockrawsig456",
-        }),
-        signTypedData: jest.fn().mockResolvedValue({
-          signature: "0xmocktypedsig789",
-        }),
-      }),
-      create: jest.fn().mockResolvedValue({
-        id: "wallet-123",
-        address: "0x1234567890abcdef1234567890abcdef12345678",
+        signMessage: mockSignMessage,
+        signSecp256k1: mockSignSecp256k1,
+        signTypedData: mockSignTypedData,
       }),
     }),
     users: () => ({
-      get: jest.fn().mockResolvedValue({
-        id: "user-123",
-        linked_accounts: [],
+      _get: mockGetUser,
+      pregenerateWallets: mockPregenerateWallets,
+    }),
+    utils: () => ({
+      auth: () => ({
+        verifyAccessToken: mockVerifyAccessToken,
       }),
     }),
   })),
 }));
+
+import {
+  createPrivyAccount,
+  ensurePrivyEthereumWallet,
+  getEmbeddedEthereumWallet,
+} from "@/lib/privy";
+
+const embeddedWallet = {
+  id: "wallet-123",
+  address: "0x1234567890abcdef1234567890abcdef12345678",
+  type: "wallet" as const,
+  chain_type: "ethereum",
+  wallet_client_type: "privy",
+};
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockSignMessage.mockResolvedValue({
+    signature: "0xmocksignature123",
+  });
+  mockSignSecp256k1.mockResolvedValue({
+    signature: "0xmockrawsig456",
+  });
+  mockSignTypedData.mockResolvedValue({
+    signature: "0xmocktypedsig789",
+  });
+});
 
 describe("createPrivyAccount", () => {
   const walletId = "test-wallet-id";
@@ -61,8 +85,102 @@ describe("createPrivyAccount", () => {
 
   it("signTransaction throws without serializer", async () => {
     const account = createPrivyAccount(walletId, address);
+    const transaction = {} as Parameters<typeof account.signTransaction>[0];
+    const options = {} as Parameters<typeof account.signTransaction>[1];
+
     await expect(
-      account.signTransaction({} as any, {} as any)
+      account.signTransaction(transaction, options)
     ).rejects.toThrow("Tempo serializer required");
+  });
+});
+
+describe("getEmbeddedEthereumWallet", () => {
+  it("returns the embedded ethereum wallet when present", () => {
+    expect(
+      getEmbeddedEthereumWallet({
+        linked_accounts: [
+          {
+            ...embeddedWallet,
+          },
+          {
+            id: "wallet-solana",
+            address: "solana-address",
+            type: "wallet",
+            chain_type: "solana",
+            wallet_client_type: "privy",
+          },
+        ],
+      })
+    ).toEqual({
+      walletId: embeddedWallet.id,
+      address: embeddedWallet.address,
+    });
+  });
+
+  it("returns null when no embedded ethereum wallet exists", () => {
+    expect(
+      getEmbeddedEthereumWallet({
+        linked_accounts: [
+          {
+            id: "external-wallet",
+            address: embeddedWallet.address,
+            type: "wallet",
+            chain_type: "ethereum",
+            wallet_client_type: "metamask",
+          },
+        ],
+      })
+    ).toBeNull();
+  });
+});
+
+describe("ensurePrivyEthereumWallet", () => {
+  it("reuses an existing embedded wallet", async () => {
+    mockGetUser.mockResolvedValue({
+      linked_accounts: [embeddedWallet],
+    });
+
+    await expect(ensurePrivyEthereumWallet("did:privy:user-123")).resolves.toEqual(
+      {
+        walletId: embeddedWallet.id,
+        address: embeddedWallet.address,
+      }
+    );
+    expect(mockPregenerateWallets).not.toHaveBeenCalled();
+  });
+
+  it("pregenerates a wallet when the user does not have one yet", async () => {
+    mockGetUser.mockResolvedValue({
+      linked_accounts: [],
+    });
+    mockPregenerateWallets.mockResolvedValue({
+      linked_accounts: [embeddedWallet],
+    });
+
+    await expect(ensurePrivyEthereumWallet("did:privy:user-123")).resolves.toEqual(
+      {
+        walletId: embeddedWallet.id,
+        address: embeddedWallet.address,
+      }
+    );
+    expect(mockPregenerateWallets).toHaveBeenCalledWith(
+      "did:privy:user-123",
+      {
+        wallets: [{ chain_type: "ethereum" }],
+      }
+    );
+  });
+
+  it("throws when wallet generation does not return an embedded wallet", async () => {
+    mockGetUser.mockResolvedValue({
+      linked_accounts: [],
+    });
+    mockPregenerateWallets.mockResolvedValue({
+      linked_accounts: [],
+    });
+
+    await expect(
+      ensurePrivyEthereumWallet("did:privy:user-123")
+    ).rejects.toThrow("Failed to create an embedded wallet for this user");
   });
 });

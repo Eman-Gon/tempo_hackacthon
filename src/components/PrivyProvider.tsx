@@ -17,10 +17,11 @@ export default function PrivyProvider({
     <Provider
       appId={appId}
       config={{
-        loginMethods: ["email"],
+        loginMethods: ["google"],
         appearance: {
-          theme: "dark",
-          accentColor: "#6366f1",
+          theme: "light",
+          accentColor: "#16a34a",
+          logo: undefined,
         },
         embeddedWallets: {
           ethereum: {

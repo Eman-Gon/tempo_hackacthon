@@ -73,13 +73,6 @@ async function searchCandidates(
       num_results: 10,
       type: "neural",
       use_autoprompt: true,
-      include_domains: [
-        "linkedin.com",
-        "github.com",
-        "stackoverflow.com",
-        "medium.com",
-        "dev.to",
-      ],
       contents: { text: { max_characters: 1000 } },
     }),
   });
@@ -212,6 +205,9 @@ async function aiCall(
   return data.choices?.[0]?.message?.content || "";
 }
 
+const SEARCH_DELAY = process.env.NODE_ENV === "test" ? 0 : 3000;
+const MAX_RETRIES = 2;
+
 /* ---- Main agent ---- */
 
 export async function runAgent(
@@ -232,13 +228,17 @@ export async function runAgent(
       message: "Generating targeted search queries with AI...",
     });
 
-    const queryGenPrompt = `You are a technical recruiter. Given this job description, generate exactly 5 diverse search queries to find matching candidates on LinkedIn, GitHub, and personal sites. Each query should target a different angle (skills, location, seniority, portfolio, open-to-work signals).
+    const queryGenPrompt = `You are a technical recruiter. Given this job description, generate exactly 3 diverse search queries to find matching candidates across DIFFERENT platforms. Do NOT put all queries on LinkedIn. Spread across: personal portfolio sites, GitHub profiles, tech blogs, company team pages, conference speaker pages, etc.
+
+Query 1: Target LinkedIn profiles
+Query 2: Target GitHub profiles or personal portfolio sites
+Query 3: Target blog posts, conference talks, or team pages
 
 Job description:
 ${jobDescription}
 
-Return ONLY a JSON array of 5 strings, no other text. Example:
-["senior React TypeScript engineer San Francisco linkedin", "frontend developer 3+ years React portfolio site", ...]`;
+Return ONLY a JSON array of 3 strings, no other text. Example:
+["senior React engineer San Francisco site:linkedin.com/in", "React TypeScript developer portfolio github.com", "frontend engineer speaker talk blog React"]`;
 
     const queryResult = await aiCall(mppFetch, queryGenPrompt);
     onEvent({
@@ -271,14 +271,46 @@ Return ONLY a JSON array of 5 strings, no other text. Example:
       message: `Running ${queries.length} search queries in parallel...`,
     });
 
-    const allResults = await Promise.all(
-      queries.map((q) => searchCandidates(mppFetch, q))
-    );
-    onEvent({
-      type: "spend",
-      message: `Completed ${queries.length} Exa searches`,
-      cost: 0.01 * queries.length,
-    });
+    // Run searches sequentially with delay + retry to avoid RPC rate limits
+    const allResults: any[][] = [];
+    for (let i = 0; i < queries.length; i++) {
+      if (i > 0) await new Promise((r) => setTimeout(r, SEARCH_DELAY));
+
+      let results: any[] = [];
+      let succeeded = false;
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          if (attempt > 0) {
+            const backoff = SEARCH_DELAY * (attempt + 1);
+            onEvent({
+              type: "search",
+              message: `Retrying Exa search ${i + 1} (attempt ${attempt + 1})...`,
+            });
+            await new Promise((r) => setTimeout(r, backoff));
+          }
+          results = await searchCandidates(mppFetch, queries[i]);
+          succeeded = true;
+          break;
+        } catch {
+          // retry
+        }
+      }
+
+      if (succeeded) {
+        allResults.push(results);
+        onEvent({
+          type: "spend",
+          message: `Exa search ${i + 1}/${queries.length} complete (${results.length} results)`,
+          cost: 0.01,
+        });
+      } else {
+        allResults.push([]);
+        onEvent({
+          type: "search",
+          message: `Exa search ${i + 1}/${queries.length} failed after retries, skipping`,
+        });
+      }
+    }
 
     // Flatten and filter valid URLs
     const rawResults = allResults.flat().filter(

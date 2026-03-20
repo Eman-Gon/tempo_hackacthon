@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { privy } from "@/lib/privy";
+import { InvalidAuthTokenError } from "@privy-io/node";
+import {
+  ensurePrivyEthereumWallet,
+  verifyPrivyAccessToken,
+} from "@/lib/privy";
 
 export async function POST(req: NextRequest) {
   try {
@@ -11,18 +15,43 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Use the funded wallet
-    const FUNDED_WALLET_ID = "js13iejxuggh7hr4oay0eodi";
-    const FUNDED_WALLET_ADDRESS = "0x52207fb0B18D48E4f4F69f8AeB63FC1e4fCc2FE1";
+    const verificationKey = process.env.PRIVY_JWT_VERIFICATION_KEY;
+    const authHeader = req.headers.get("authorization");
+    const accessToken = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice("Bearer ".length)
+      : null;
 
-    return NextResponse.json({
-      walletId: FUNDED_WALLET_ID,
-      address: FUNDED_WALLET_ADDRESS,
-    });
-  } catch (error: any) {
-    console.error("Wallet creation error:", error);
+    if (verificationKey) {
+      if (!accessToken) {
+        return NextResponse.json(
+          { error: "Missing Privy access token" },
+          { status: 401 }
+        );
+      }
+
+      const verifiedToken = await verifyPrivyAccessToken(accessToken);
+      if (verifiedToken.user_id !== privyUserId) {
+        return NextResponse.json(
+          { error: "Unauthorized wallet request" },
+          { status: 403 }
+        );
+      }
+    }
+
+    return NextResponse.json(await ensurePrivyEthereumWallet(privyUserId));
+  } catch (error: unknown) {
+    if (error instanceof InvalidAuthTokenError) {
+      return NextResponse.json(
+        { error: "Invalid Privy access token" },
+        { status: 401 }
+      );
+    }
+
+    console.error("Wallet error:", error);
     return NextResponse.json(
-      { error: error.message || "Failed to create wallet" },
+      {
+        error: error instanceof Error ? error.message : "Failed to get wallet",
+      },
       { status: 500 }
     );
   }
